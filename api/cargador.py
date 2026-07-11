@@ -33,7 +33,8 @@ def conectar_supabase():
     return psycopg2.connect(
         host=DB_HOST, database=DB_NAME,
         user=DB_USER, password=DB_PASS, port=DB_PORT,
-        connect_timeout=10
+        connect_timeout=10,
+        sslmode="require"
     )
 
 def obtener_ultima_fecha_partido(conn):
