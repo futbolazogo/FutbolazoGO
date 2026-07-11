@@ -1,0 +1,16 @@
+flask
+flask-cors
+flask-limiter
+psycopg2-binary>=2.9.10
+requests
+APScheduler
+gunicorn
+openai
+fastapi
+python-multipart
+pydantic
+
+
+
+
+ 
