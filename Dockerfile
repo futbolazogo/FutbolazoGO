@@ -11,4 +11,4 @@ COPY . .
 
 # Comando de inicio
 # Usamos el formato Shell (sin [] ni sh -c) para que $PORT se expanda correctamente.
-CMD ["sh", "-c", "gunicorn --chdir api --bind 0.0.0.0:$PORT app:app"]
+CMD ["gunicorn", "--chdir", "api", "app:app"]
