@@ -9,6 +9,3 @@ openai
 fastapi
 python-multipart
 pydantic
-
-
- 
