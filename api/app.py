@@ -45,8 +45,8 @@ except ImportError:
 # ─────────────────────────────────────────────────────
 DB_HOST = "aws-1-us-east-2.pooler.supabase.com"
 DB_NAME = "postgres"
-DB_USER = os.environ.get("BASE_USER", "") 
-DB_PASS =  os.environ.get("BASE_PASS", "") 
+DB_USER = os.environ.get("BASE_USER") or os.environ.get("USER_BASE")
+DB_PASS = os.environ.get("BASE_PASS") or os.environ.get("CLAVE_BASE")
 DB_PORT = "6543"
 
 def conectar():
