@@ -7,4 +7,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["sh", "-c", "gunicorn --chdir api --bind 0.0.0.0:$PORT app:app"]
+CMD ["sh", "-c", "echo '--- PORT es:' $PORT && env | sort && gunicorn --chdir api --bind 0.0.0.0:${PORT:-8080} app:app"]
