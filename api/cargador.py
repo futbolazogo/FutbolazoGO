@@ -34,7 +34,8 @@ def conectar_supabase():
         host=DB_HOST, database=DB_NAME,
         user=DB_USER, password=DB_PASS, port=DB_PORT,
         connect_timeout=10,
-        sslmode="require"
+        sslmode="require",
+        options="-c search_path=public --project=vlndghikrjvxmiibbqbo"
     )
 
 def obtener_ultima_fecha_partido(conn):
