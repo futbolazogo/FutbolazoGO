@@ -34,7 +34,7 @@ import psycopg2.extras
 import cargador  # funciones de scraping / carga / trivia (ex main.py)
 
 app = Flask(__name__)
-CORS(app)  # <--- AGREGAR ESTA LÍNEA JUSTO AQUÍ abajo de app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 try:
     from flask_limiter import Limiter
