@@ -86,20 +86,16 @@ def error_response(e, status=500, mensaje="Ocurrió un error interno. Intentá d
 # ─────────────────────────────────────────────────────
 app = Flask(__name__, static_folder=".")
 
-# CORS restringido: por defecto sólo permite pedidos desde el propio origen.
-# Configurá la variable de entorno ALLOWED_ORIGINS con una lista separada
-# por comas si necesitás servir el frontend desde otro dominio, ej:
-#   ALLOWED_ORIGINS=https://golazo-ia.com,https://www.golazo-ia.com
-_origenes_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
-if _origenes_env:
-    ORIGENES_PERMITIDOS = [o.strip() for o in _origenes_env.split(",") if o.strip()]
-else:
-    # Sin la variable configurada, no se habilita CORS de terceros: sólo
-    # funcionan los pedidos same-origin (el propio index.html servido por Flask).
-    ORIGENES_PERMITIDOS = []
+# 1. Habilitamos CORS global y público sin restricciones
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-CORS(app, origins=ORIGENES_PERMITIDOS if ORIGENES_PERMITIDOS else None, supports_credentials=False)
-
+# 2. Forzamos los encabezados en cada respuesta para saltar cualquier bloqueo
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 # ─────────────────────────────────────────────────────
 # RATE LIMITING (mitiga fuerza bruta / spam de salas y resultados)
 # Requiere el paquete "flask-limiter" (agregalo a requirements.txt).
