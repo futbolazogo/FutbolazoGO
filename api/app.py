@@ -33,16 +33,6 @@ import psycopg2.extras
 
 import cargador  # funciones de scraping / carga / trivia (ex main.py)
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
-
-# 2. MÉTODO INFALIBLE: Forzar encabezados en cada respuesta del servidor
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
 try:
     from flask_limiter import Limiter
     from flask_limiter.util import get_remote_address
@@ -95,6 +85,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Cache-Control', 'no-store, must-revalidate')
     return response
 # ─────────────────────────────────────────────────────
 # RATE LIMITING (mitiga fuerza bruta / spam de salas y resultados)
