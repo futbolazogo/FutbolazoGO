@@ -608,6 +608,59 @@ def _calcular_puntaje_server(conn, id_partido, respuestas):
     return puntos, correctas, errores
 
 
+# ─────────────────────────────────────────────────────
+# JUGADOR GLOBAL — identidad persistente + puntaje acumulado
+# entre TODAS las trivias que jugó (demo/mundial/liga/sala).
+# ─────────────────────────────────────────────────────
+
+def _asegurar_tabla_jugadores_global():
+    """Crea la tabla jugadores_global si todavía no existe. Se llama al
+    arrancar el proceso; es idempotente (CREATE TABLE IF NOT EXISTS)."""
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS public.jugadores_global (
+                token             TEXT PRIMARY KEY,
+                apodo             TEXT NOT NULL,
+                puntos_totales    INTEGER NOT NULL DEFAULT 0,
+                partidas_jugadas  INTEGER NOT NULL DEFAULT 0,
+                creado_en         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                actualizado_en    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info("Tabla jugadores_global verificada/creada.")
+    except Exception as e:
+        logger.exception(f"No se pudo verificar/crear la tabla jugadores_global: {e}")
+
+
+def _acumular_puntaje_jugador(conn, token, apodo, puntos_ganados):
+    """
+    Suma puntos_ganados al total histórico del jugador (identificado por
+    un token persistente que el navegador guarda en localStorage, igual
+    en todas las trivias que juegue). Si el jugador no existía, lo crea.
+    No lanza si token viene vacío: simplemente no acumula nada.
+    """
+    if not token:
+        return
+    apodo = (apodo or "Jugador").strip()[:30] or "Jugador"
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO jugadores_global (token, apodo, puntos_totales, partidas_jugadas, actualizado_en)
+        VALUES (%s, %s, %s, 1, NOW())
+        ON CONFLICT (token) DO UPDATE
+          SET apodo = EXCLUDED.apodo,
+              puntos_totales = jugadores_global.puntos_totales + EXCLUDED.puntos_totales,
+              partidas_jugadas = jugadores_global.partidas_jugadas + 1,
+              actualizado_en = NOW();
+    """, (token, apodo, puntos_ganados))
+    conn.commit()
+    cursor.close()
+
+
 @app.route("/api/salas/<codigo>/resultado", methods=["POST"])
 @limiter.limit("30 per minute")
 def api_guardar_resultado(codigo):
@@ -631,6 +684,7 @@ def api_guardar_resultado(codigo):
 
     apodo = (data.get("apodo") or "Jugador").strip()[:30]
     token = (data.get("token") or "").strip()[:64]
+    token_global = (data.get("tokenGlobal") or "").strip()[:64]
     respuestas = data.get("respuestas")
     if not apodo:
         return jsonify({"error": "Falta el apodo"}), 400
@@ -682,6 +736,12 @@ def api_guardar_resultado(codigo):
                   jugado_en=NOW();
         """, (codigo, apodo, puntos, correctas, errores, token))
         conn.commit()
+
+        # Además del ranking de la sala, sumamos estos puntos al puntaje
+        # acumulado global del jugador (identidad persistente entre partidas).
+        if token_global:
+            _acumular_puntaje_jugador(conn, token_global, apodo, puntos)
+
         cursor.close()
         conn.close()
         return jsonify({"ok": True, "puntos": puntos, "correctas": correctas, "errores": errores})
@@ -728,6 +788,143 @@ def api_ranking(codigo):
         ]
         return jsonify({"ranking": ranking})
 
+    except Exception as e:
+        return error_response(e)
+
+
+# ─────────────────────────────────────────────────────
+# ENDPOINTS JUGADOR GLOBAL (identidad persistente + ranking general)
+# ─────────────────────────────────────────────────────
+
+@app.route("/api/jugador/resultado", methods=["POST"])
+@limiter.limit("30 per minute")
+def api_jugador_resultado():
+    """
+    Guarda el resultado de una trivia jugada FUERA de una sala (modo
+    Mundial o Liga, jugadas contra un partido real) y lo suma al puntaje
+    acumulado histórico del jugador. El modo demo (BANCO_DEMO, sin
+    id_partido real) no llama a este endpoint desde el cliente.
+
+    Body: { token, apodo, id_partido, respuestas: [...] }
+    El puntaje se recalcula en el servidor con la misma lógica anti-trampa
+    que las salas (nunca se confía en el puntaje que manda el cliente).
+    """
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Body inválido, se esperaba JSON"}), 400
+
+    token = (data.get("token") or "").strip()[:64]
+    apodo = (data.get("apodo") or "Jugador").strip()[:30]
+    id_partido = str(data.get("id_partido") or "").strip()
+    respuestas = data.get("respuestas")
+
+    if not token:
+        return jsonify({"error": "Falta el token de jugador"}), 400
+    if not id_partido:
+        return jsonify({"error": "Falta id_partido"}), 400
+    if not isinstance(respuestas, list):
+        return jsonify({"error": "Formato de respuestas inválido"}), 400
+
+    try:
+        conn = conectar()
+        puntos, correctas, errores = _calcular_puntaje_server(conn, id_partido, respuestas)
+        _acumular_puntaje_jugador(conn, token, apodo, puntos)
+        conn.close()
+        return jsonify({"ok": True, "puntos": puntos, "correctas": correctas, "errores": errores})
+    except Exception as e:
+        return error_response(e)
+
+
+@app.route("/api/jugador/perfil")
+@limiter.limit("60 per minute")
+def api_jugador_perfil():
+    """Devuelve el apodo y puntaje acumulado guardado para un token de jugador."""
+    token = (request.args.get("token") or "").strip()[:64]
+    if not token:
+        return jsonify({"error": "Falta el token"}), 400
+
+    try:
+        conn = conectar()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cursor.execute("""
+            SELECT apodo, puntos_totales, partidas_jugadas
+            FROM jugadores_global WHERE token = %s;
+        """, (token,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            return jsonify({"jugador": None})
+
+        return jsonify({"jugador": {
+            "apodo": row["apodo"],
+            "puntosTotales": row["puntos_totales"],
+            "partidasJugadas": row["partidas_jugadas"],
+        }})
+    except Exception as e:
+        return error_response(e)
+
+
+@app.route("/api/ranking/global")
+@limiter.limit("60 per minute")
+def api_ranking_global():
+    """
+    Ranking general de TODOS los jugadores por puntaje acumulado.
+    Query params: ?limit=50 (tope 100) &token=... (para incluir "mi posición"
+    aunque no esté en el top mostrado).
+    """
+    token = (request.args.get("token") or "").strip()[:64]
+    try:
+        limite = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        limite = 50
+    limite = max(1, min(limite, 100))
+
+    try:
+        conn = conectar()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT token, apodo, puntos_totales, partidas_jugadas
+            FROM jugadores_global
+            ORDER BY puntos_totales DESC, partidas_jugadas ASC
+            LIMIT %s;
+        """, (limite,))
+        filas = cursor.fetchall()
+
+        ranking = [
+            {
+                "posicion": i + 1,
+                "apodo": f["apodo"],
+                "puntosTotales": f["puntos_totales"],
+                "partidasJugadas": f["partidas_jugadas"],
+            }
+            for i, f in enumerate(filas)
+        ]
+
+        mi_posicion = None
+        if token:
+            cursor.execute("""
+                SELECT posicion, apodo, puntos_totales, partidas_jugadas FROM (
+                    SELECT token, apodo, puntos_totales, partidas_jugadas,
+                           ROW_NUMBER() OVER (ORDER BY puntos_totales DESC, partidas_jugadas ASC) AS posicion
+                    FROM jugadores_global
+                ) t
+                WHERE token = %s;
+            """, (token,))
+            fila_yo = cursor.fetchone()
+            if fila_yo:
+                mi_posicion = {
+                    "posicion": fila_yo["posicion"],
+                    "apodo": fila_yo["apodo"],
+                    "puntosTotales": fila_yo["puntos_totales"],
+                    "partidasJugadas": fila_yo["partidas_jugadas"],
+                }
+
+        cursor.close()
+        conn.close()
+        return jsonify({"ranking": ranking, "yo": mi_posicion})
     except Exception as e:
         return error_response(e)
 
@@ -908,6 +1105,10 @@ def _iniciar_scheduler():
 # con el reloader de debug de Flask). En producción con gunicorn, correr
 # con 1 solo worker (ver Procfile) para que el job no se dispare N veces.
 if os.environ.get("WERKZEUG_RUN_MAIN") != "true" or os.environ.get("FLASK_DEBUG") != "1":
+    try:
+        _asegurar_tabla_jugadores_global()
+    except Exception as e:
+        logger.exception(f"No se pudo preparar la tabla de jugadores global: {e}")
     try:
         _iniciar_scheduler()
     except Exception as e:
